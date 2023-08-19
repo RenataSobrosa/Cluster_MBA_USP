@@ -1,0 +1,605 @@
+
+# CARREGAMENTO DE PACOTES
+
+pacotes <- c("plotly", "tidyverse", "tidyr", "dplyr", "ggrepel", "gridExtra", "caret", "knitr", "sf",
+             "kableExtra", "cluster", "factoextra", "readxl", "writexl", "tmap", "ggplot2",
+             "geobr", "gghighlight", "pander", "png", "viridis", "scales")
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){
+  instalador <- pacotes[!pacotes %in% installed.packages()]
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T) 
+} else {
+  sapply(pacotes, require, character = T) 
+}
+
+# CARREGAMENTO E TRATAMENTO DA BASE DE DADOS
+base <- read_xlsx(path = "DADOS_CLUSTER.xlsx")
+dados <- base %>% 
+  select(-4, -5, -6)
+
+
+### PESSOA JURÍDICA ###
+
+# TRATAMENTO BASE PJ
+
+colunasPJ <- c("UF", "MUNICIPIO", "CODIGO_IBGE", "AGRICULTURA_PECUARIA_PRODUCAO_FLORESTAL_PESCA_E_AQUICULTURA", 
+                    "INDUSTRIAS_EXTRATIVAS", "INDUSTRIAS_DE_TRANSFORMACAO", "ELETRICIDADE_E_GAS",
+                    "AGUA_ESGOTO_ATIVIDADES_DE_GESTAO_DE_RESIDUOS_E_DESCONTAMINACAO", "CONSTRUCAO",
+                    "COMERCIO_REPARACAO_DE_VEICULOS_AUTOMOTORES_E_MOTOCICLETAS",
+                    "TRANSPORTE_ARMAZENAGEM_E_CORREIO", "ALOJAMENTO_E_ALIMENTACAO",
+                    "INFORMACAO_E_COMUNICACAO", "ATIVIDADES_FINANCEIRAS_DE_SEGUROS_E_SERVICOS_RELACIONADOS",
+                    "ATIVIDADES_IMOBILIARIAS", "ATIVIDADES_PROFISSIONAIS_CIENTIFICAS_E_TECNICAS",
+                    "ATIVIDADES_ADMINISTRATIVAS_E_SERVICOS_COMPLEMENTARES",
+                    "ADMINISTRACAO_PUBLICA_DEFESA_E_SEGURIDADE_SOCIAL", "EDUCACAO",
+                    "SAUDE_HUMANA_E_SERVICOS_SOCIAIS", "ARTES_CULTURA_ESPORTE_E_RECREACAO",
+                    "OUTRAS_ATIVIDADES_DE_SERVICOS", "SERVICOS_DOMESTICOS",
+                    "ORGANISMOS_INTERNACIONAIS_E_OUTRAS_INSTITUICOES_EXTRATERRITORIAIS")
+
+PJ <- dados %>% 
+  select(all_of(colunasPJ)) %>% 
+  mutate(across(where(is.numeric), ~ as.numeric(as.character(.)))) %>% 
+  mutate(TOTAL = rowSums(across(where(is.numeric)), na.rm = TRUE)) %>%
+  mutate(across(where(is.numeric), ~ . / TOTAL * 100)) %>% 
+  select(-TOTAL)
+
+# CÁLCULO DA SOMA DOS QUADRADOS PARA MÉTODO ELBOW
+wss_PJ <- numeric(10)
+for (k in 1:10) {
+  wss_PJ[k] <- kmeans(PJ[, 4:24], centers = k)$tot.withinss
+}
+
+wss_PJ <- data.frame(k = 1:10, wss = wss_PJ)
+
+# GRÁFICO DE ELBOW
+ggplot(wss_PJ, aes(x = k, y = wss)) +
+  geom_line(color = "#440154FF", size = 0.75) +
+  geom_point(size = 2.5, shape = 21, fill = "#440154FF", color = "white") +
+  geom_vline(xintercept = 2, linetype = "dashed", color = "#440154FF", size = 0.75) +
+  labs(x = "Nº de clusters", y = "Total da soma dos quadrados") +
+  ggtitle(NULL) +
+  theme_light() +  # Tema com fundo claro
+  scale_x_continuous(breaks = seq(1, 10, 1), labels = seq(1, 10, 1)) +  # Definir eixo x com valores inteiros
+  theme(panel.grid.major = element_blank(),  # Remover linhas de grade principais
+        panel.grid.minor = element_blank())  # Remover linhas de grade secundárias
+
+# GERANDO CLUSTERS E INSERINDO NA BASE DE DADOS
+Cluster_PJ <- kmeans(PJ[, 4:24], centers = 2)
+PJ$CLUSTER <- Cluster_PJ$cluster
+PJ <- PJ %>% 
+  relocate(CLUSTER, .before = UF)
+
+# GERANDO AS MÉDIAS POR CLUSTER
+medias_pj <- PJ %>% 
+  group_by(CLUSTER) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# TRANSPOSIÇÃO MEDIAS PJ
+colunas_interessePJ <- colnames(PJ)[5:25]
+
+medias_pj_transposto <- PJ %>%
+  select(CLUSTER, all_of(colunas_interessePJ)) %>%
+  pivot_longer(cols = -CLUSTER, names_to = "CNAE", values_to = "Valor") %>%
+  group_by(CLUSTER, CNAE) %>%
+  summarise(Media = mean(Valor, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = CLUSTER, values_from = Media, names_prefix = "CLUSTER_")
+
+# GRÁFICO DE BARRAS MÉDIAS CLUSTER
+medias_pj_1 <- medias_pj_transposto %>%
+  arrange(desc(CLUSTER_1)) %>%
+  head(10)
+
+ggplot(medias_pj_1, aes(x = CLUSTER_1, y = reorder(CNAE, CLUSTER_1))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pj_1))) +
+  geom_text(aes(label = paste0(round(CLUSTER_1, 1), "%"), x = CLUSTER_1, y = CNAE),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+medias_pj_2 <- medias_pj_transposto %>%
+  arrange(desc(CLUSTER_2)) %>%
+  head(10)
+
+ggplot(medias_pj_2, aes(x = CLUSTER_2, y = reorder(CNAE, CLUSTER_2))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pj_2))) +
+  geom_text(aes(label = paste0(round(CLUSTER_2, 1), "%"), x = CLUSTER_2, y = CNAE),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+# AJUSTE DO CLUSTER COMO STRING
+PJ <- PJ %>% 
+  mutate(CLUSTER = as.character(CLUSTER))
+
+# ANOVAS PJ
+pander(anova_pj1 <- aov(formula = AGRICULTURA_PECUARIA_PRODUCAO_FLORESTAL_PESCA_E_AQUICULTURA ~ CLUSTER, data = PJ))
+pander(anova_pj2 <- aov(formula = INDUSTRIAS_EXTRATIVAS ~ CLUSTER, data = PJ)) #P-Valor 0.773
+pander(anova_pj3 <- aov(formula = INDUSTRIAS_DE_TRANSFORMACAO ~ CLUSTER, data = PJ))
+pander(anova_pj4 <- aov(formula = ELETRICIDADE_E_GAS ~ CLUSTER, data = PJ)) #P-Valor 0.803
+pander(anova_pj5 <- aov(formula = AGUA_ESGOTO_ATIVIDADES_DE_GESTAO_DE_RESIDUOS_E_DESCONTAMINACAO ~ CLUSTER, data = PJ))
+pander(anova_pj6 <- aov(formula = CONSTRUCAO ~ CLUSTER, data = PJ))
+pander(anova_pj7 <- aov(formula = COMERCIO_REPARACAO_DE_VEICULOS_AUTOMOTORES_E_MOTOCICLETAS ~ CLUSTER, data = PJ))
+pander(anova_pj8 <- aov(formula = TRANSPORTE_ARMAZENAGEM_E_CORREIO ~ CLUSTER, data = PJ))
+pander(anova_pj9 <- aov(formula = ALOJAMENTO_E_ALIMENTACAO ~ CLUSTER, data = PJ))
+pander(anova_pj10 <- aov(formula = INFORMACAO_E_COMUNICACAO ~ CLUSTER, data = PJ))
+pander(anova_pj11 <- aov(formula = ATIVIDADES_FINANCEIRAS_DE_SEGUROS_E_SERVICOS_RELACIONADOS ~ CLUSTER, data = PJ))
+pander(anova_pj12 <- aov(formula = ATIVIDADES_IMOBILIARIAS ~ CLUSTER, data = PJ))
+pander(anova_pj13 <- aov(formula = ATIVIDADES_PROFISSIONAIS_CIENTIFICAS_E_TECNICAS ~ CLUSTER, data = PJ))
+pander(anova_pj14 <- aov(formula = ATIVIDADES_ADMINISTRATIVAS_E_SERVICOS_COMPLEMENTARES ~ CLUSTER, data = PJ))
+pander(anova_pj15 <- aov(formula = ADMINISTRACAO_PUBLICA_DEFESA_E_SEGURIDADE_SOCIAL ~ CLUSTER, data = PJ))
+pander(anova_pj16 <- aov(formula = EDUCACAO ~ CLUSTER, data = PJ))
+pander(anova_pj17 <- aov(formula = SAUDE_HUMANA_E_SERVICOS_SOCIAIS ~ CLUSTER, data = PJ))
+pander(anova_pj18 <- aov(formula = ARTES_CULTURA_ESPORTE_E_RECREACAO ~ CLUSTER, data = PJ))
+pander(anova_pj19 <- aov(formula = OUTRAS_ATIVIDADES_DE_SERVICOS ~ CLUSTER, data = PJ))
+pander(anova_pj20 <- aov(formula = SERVICOS_DOMESTICOS ~ CLUSTER, data = PJ)) #P-Valor 0.09
+pander(anova_pj21 <- aov(formula = ORGANISMOS_INTERNACIONAIS_E_OUTRAS_INSTITUICOES_EXTRATERRITORIAIS ~ CLUSTER, data = PJ)) #P-Valor 0.587
+
+# FUNÇÃO PARA CRIAR BOXPLOT
+criar_boxplot <- function(anova_result, variavel) {
+  p <- ggplot(PJ) +
+    aes(x = CLUSTER, y = .data[[variavel]]) +
+    geom_boxplot() +
+    labs(x = "Cluster", y = variavel)
+  return(p)
+}
+
+# CRIANDO BOXPLOT PARA CADA CNAE
+boxplot_pj1 <- criar_boxplot(anova_pj1, "AGRICULTURA_PECUARIA_PRODUCAO_FLORESTAL_PESCA_E_AQUICULTURA")
+boxplot_pj2 <- criar_boxplot(anova_pj2, "INDUSTRIAS_EXTRATIVAS")
+boxplot_pj3 <- criar_boxplot(anova_pj3, "INDUSTRIAS_DE_TRANSFORMACAO")
+boxplot_pj4 <- criar_boxplot(anova_pj4, "ELETRICIDADE_E_GAS")
+boxplot_pj5 <- criar_boxplot(anova_pj5, "AGUA_ESGOTO_ATIVIDADES_DE_GESTAO_DE_RESIDUOS_E_DESCONTAMINACAO")
+boxplot_pj6 <- criar_boxplot(anova_pj6, "CONSTRUCAO")
+boxplot_pj7 <- criar_boxplot(anova_pj7, "COMERCIO_REPARACAO_DE_VEICULOS_AUTOMOTORES_E_MOTOCICLETAS")
+boxplot_pj8 <- criar_boxplot(anova_pj8, "TRANSPORTE_ARMAZENAGEM_E_CORREIO")
+boxplot_pj9 <- criar_boxplot(anova_pj9, "ALOJAMENTO_E_ALIMENTACAO")
+boxplot_pj10 <- criar_boxplot(anova_pj10, "INFORMACAO_E_COMUNICACAO")
+boxplot_pj11 <- criar_boxplot(anova_pj11, "ATIVIDADES_FINANCEIRAS_DE_SEGUROS_E_SERVICOS_RELACIONADOS")
+boxplot_pj12 <- criar_boxplot(anova_pj12, "ATIVIDADES_IMOBILIARIAS")
+boxplot_pj13 <- criar_boxplot(anova_pj13, "ATIVIDADES_PROFISSIONAIS_CIENTIFICAS_E_TECNICAS")
+boxplot_pj14 <- criar_boxplot(anova_pj14, "ATIVIDADES_ADMINISTRATIVAS_E_SERVICOS_COMPLEMENTARES")
+boxplot_pj15 <- criar_boxplot(anova_pj15, "ADMINISTRACAO_PUBLICA_DEFESA_E_SEGURIDADE_SOCIAL")
+boxplot_pj16 <- criar_boxplot(anova_pj16, "EDUCACAO")
+boxplot_pj17 <- criar_boxplot(anova_pj17, "SAUDE_HUMANA_E_SERVICOS_SOCIAIS")
+boxplot_pj18 <- criar_boxplot(anova_pj18, "ARTES_CULTURA_ESPORTE_E_RECREACAO")
+boxplot_pj19 <- criar_boxplot(anova_pj19, "OUTRAS_ATIVIDADES_DE_SERVICOS")
+boxplot_pj20 <- criar_boxplot(anova_pj20, "SERVICOS_DOMESTICOS")
+boxplot_pj21 <- criar_boxplot(anova_pj21, "ORGANISMOS_INTERNACIONAIS_E_OUTRAS_INSTITUICOES_EXTRATERRITORIAIS")
+
+# COMBINANDO OS BOXPLOTS DOS CNAES MAIS RELEVANTES
+boxplots_combinadospj <- gridExtra::grid.arrange(boxplot_pj1, boxplot_pj3, boxplot_pj7, ncol = 3)
+
+### MAPA PJ ###
+
+# DEFININDO AS CORES DOS CLUSTERS
+cor_cluster1PJ <- "#440154FF"
+cor_cluster2PJ <- "#27AD81FF"
+
+# CARREGANDO DADOS MAPA BRASIL
+all_mun_br <- read_municipality(year = 2020)
+
+# AJUSTE DADOS
+base_mapapj <- PJ %>%
+  select(UF, MUNICIPIO, CODIGO_IBGE, CLUSTER)
+base_mapapj$CODIGO_IBGE <- as.numeric(base_mapapj$CODIGO_IBGE)
+
+vec1 <- as.numeric(base_mapapj$CODIGO_IBGE)
+all_geo_pj <- all_mun_br %>%
+  filter(code_muni %in% vec1)
+
+all_geo_pj <- left_join(all_geo_pj, base_mapapj, by = c("code_muni" = "CODIGO_IBGE"))
+
+# PLOT DO MAPA
+tm_shape(all_geo_pj) +
+  tm_borders(lwd = 0.1) +
+  tm_fill(col = "CLUSTER", palette = c(cor_cluster1PJ, cor_cluster2PJ), style = "cat") +
+  tm_layout(frame = FALSE) +
+  tm_legend(legend.position = c("right", "bottom"),
+            legend.bg.color = "white", legend.title.size = 1, legend.text.size = 1)
+
+# CONTAGEM QUANTIDADE DE MUNICIPIOS POR CLUSTER
+dados_contagemPJ <- PJ %>%
+  group_by(CLUSTER) %>%
+  summarise(Quantidade = n_distinct(CODIGO_IBGE))
+dados_contagemPJ$CLUSTER <- factor(dados_contagemPJ$CLUSTER)
+
+# GRÁFICO BARRAS
+ggplot(dados_contagemPJ, aes(x = CLUSTER, y = Quantidade, fill = CLUSTER)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Quantidade), vjust = -0.2, color = "black", fontface = "bold") +  # Adicionar contagem dentro das barras
+  labs(x = NULL, y = NULL, fill = NULL) +  # Remover rótulos dos eixos e título da legenda
+  scale_fill_manual(values = c(cor_cluster1PJ, cor_cluster2PJ)) +
+  theme_minimal() +
+  theme(axis.ticks.x = element_blank(),   # Remover marcas do eixo x
+        axis.text.y = element_blank(),    # Remover rótulos do eixo y
+        axis.ticks.y = element_blank(),   # Remover marcas do eixo y
+        legend.position = "none",         # Remover a legenda
+        plot.title = element_blank(),     # Remover título do gráfico
+        plot.subtitle = element_blank(),  # Remover subtítulo do gráfico
+        plot.caption = element_blank(),   # Remover legenda do gráfico
+        panel.grid.major = element_blank(),  # Remover linhas de grade principais
+        panel.grid.minor = element_blank())  # Remover linhas de grade secundárias
+
+### PESSOA FÍSICA ###
+
+# AJUSTE DA BASE DE DADOS
+colunasPF <- c("UF", "MUNICIPIO", "CODIGO_IBGE", "MEMBROS_SUPERIORES_E_DIRIGENTES_DO_PODER_PUBLICO", 
+               "DIRIGENTES_DE_EMPRESAS_E_ORGANIZACOES_EXCETO_DE_INTERESSE_PUBLICO", 
+               "DIRETORES_E_GERENTES_EM_EMPRESA_DE_SERVICOS_DE_SAUDE_DA_EDUCACAO_OU_D", "GERENTES", 
+               "PESQUISADORES_E_PROFISSIONAIS_POLICIENTIFICOS", "PROFISSIONAIS_DAS_CIENCIAS_EXATAS_FISICAS_E_DA_ENGENHARIA", 
+               "PROFISSIONAIS_DAS_CIENCIAS_BIOLOGICAS_DA_SAUDE_E_AFINS", "PROFISSIONAIS_DO_ENSINO", 
+               "PROFISSIONAIS_DAS_CIENCIAS_JURIDICAS", "PROFISSIONAIS_DAS_CIENCIAS_SOCIAIS_E_HUMANAS", 
+               "COMUNICADORES_ARTISTAS_E_RELIGIOSOS", "PROFISSIONAIS_EM_GASTRONOMIA", "TECNICOS_POLIVALENTES", 
+               "TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_FISICAS_QUIMICAS_ENGENHARIA_E_AF", 
+               "TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_BIOLOGICAS_BIOQUIMICAS_DA_SAUDE_", 
+               "PROFESSORES_LEIGOS_E_DE_NIVEL_MEDIO", "TECNICOS_DE_NIVEL_MEDIO_EM_SERVICOS_DE_TRANSPORTES", 
+               "TECNICOS_DE_NIVEL_MEDIO_NAS_CIENCIAS_ADMINISTRATIVAS", 
+               "TECNICOS_EM_NIVEL_MEDIO_DOS_SERVICOS_CULTURAIS_DAS_COMUNICACOES_E_DOS_", "OUTROS_TECNICOS_DE_NIVEL_MEDIO", 
+               "ESCRITURARIOS", "TRABALHADORES_DE_ATENDIMENTO_AO_PUBLICO", "TRABALHADORES_DOS_SERVICOS", 
+               "VENDEDORES_E_PRESTADORES_DE_SERVICOS_DO_COMERCIO", "PRODUTORES_NA_EXPLORACAO_AGROPECUARIA", 
+               "TRABALHADORES_NA_EXPLORACAO_AGROPECUARIA", "PESCADORES_E_EXTRATIVISTAS_FLORESTAIS", 
+               "TRABALHADORES_DA_MECANIZACAO_AGROPECUARIA_E_FLORESTAL", 
+               "TRABALHADORES_DA_INDUSTRIA_EXTRATIVA_E_DA_CONSTRUCAO_CIVIL", 
+               "TRABALHADORES_DA_TRANSFORMACAO_DE_METAIS_E_DE_COMPOSITOS", 
+               "TRABALHADORES_DA_FABRICACAO_E_INSTALACAO_ELETROELETRONICA", 
+               "MONTADORES_DE_APARELHOS_E_INSTRUMENTOS_DE_PRECISAO_E_MUSICAIS", 
+               "JOALHEIROS_VIDREIROS_CERAMISTAS_E_AFINS", "TRABALHADORES_NAS_INDUSTRIAS_TEXTIL_DO_CURTIMENTO_DO_VESTUARIO_E_DAS_", 
+               "TRABALHADORES_DAS_INDUSTRIAS_DE_MADEIRA_E_DO_MOBILIARIO", "TRABALHADORES_DE_FUNCOES_TRANSVERSAIS", 
+               "TRABALHADORES_DO_ARTESANATO", "TRABALHADORES_EM_INDUSTRIAS_DE_PROCESSOS_CONTINUOS_E_OUTRAS_INDUSTRIAS", 
+               "TRABALHADORES_DE_INSTALACOES_SIDERURGICAS_E_DE_MATERIAIS_DE_CONSTRUCAO", 
+               "TRABALHADORES_DE_INSTALACOES_E_MAQUINAS_DE_FABRICACAO_DE_CELULOSE_E_PAP", 
+               "TRABALHADORES_DA_FABRICACAO_DE_ALIMENTOS_BEBIDAS_E_FUMO", "OPERADORES_DE_PRODUCAO_CAPTACAO_TRATAMENTO_E_DISTRIBUICAO_ENERGIA_A", 
+               "TRABALHADORES_EM_SERVICOS_DE_REPARACAO_E_MANUTENCAO_MECANICA", "POLIMANTENEDORES", 
+               "OUTROS_TRABALHADORES_DA_CONSERVACAO_MANUTENCAO_E_REPARACAO")
+
+PF <- dados %>% 
+  select(all_of(colunasPF)) %>% 
+  mutate(across(where(is.numeric), ~ as.numeric(as.character(.)))) %>% 
+  mutate(TOTAL = rowSums(across(where(is.numeric)), na.rm = TRUE)) %>%
+  mutate(across(where(is.numeric), ~ . / TOTAL * 100)) %>% 
+  select(-TOTAL)
+
+# CÁLCULO DA SOMA DOS QUADRADOS PARA MÉTODO ELBOW
+wss_PF <- numeric(10)
+for (k in 1:10) {
+  wss_PF[k] <- kmeans(PF[, 4:48], centers = k)$tot.withinss
+}
+wss_PF <- data.frame(k = 1:10, wss = wss_PF)
+
+# GRÁFICO DE ELBOW
+ggplot(wss_PF, aes(x = k, y = wss)) +
+  geom_line(color = "#440154FF", size = 0.75) +
+  geom_point(size = 2.5, shape = 21, fill = "#440154FF", color = "white") +
+  geom_vline(xintercept = 5, linetype = "dashed", color = "#440154FF", size = 0.75) +
+  labs(x = "Nº de clusters", y = "Total da soma dos quadrados") +
+  ggtitle(NULL) +
+  theme_light() +  # Tema com fundo claro
+  scale_x_continuous(breaks = seq(1, 10, 1), labels = seq(1, 10, 1)) +  # Definir eixo x com valores inteiros
+  theme(panel.grid.major = element_blank(),  # Remover linhas de grade principais
+        panel.grid.minor = element_blank())  # Remover linhas de grade secundárias
+
+# INSERINDO OS CLUSTERS NA BASE DE DADOS
+Cluster_PF <- kmeans(PF[, 4:48], centers = 5)
+PF$CLUSTER <- Cluster_PF$cluster
+PF <- PF %>% 
+  relocate(CLUSTER, .before = UF)
+
+# AJUSTANDO NOMENCLATURAS DAS MÉTRICAS
+PF <- PF %>% 
+  mutate(CLUSTER = as.character(CLUSTER)) %>% 
+  rename(TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_BIOLOGICAS_BIOQUIMICAS_DA_SAUDE = TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_BIOLOGICAS_BIOQUIMICAS_DA_SAUDE_) %>% 
+  rename(TECNICOS_EM_NIVEL_MEDIO_DOS_SERVICOS_CULTURAIS_DAS_COMUNICACOES = TECNICOS_EM_NIVEL_MEDIO_DOS_SERVICOS_CULTURAIS_DAS_COMUNICACOES_E_DOS_) %>% 
+  rename(TRABALHADORES_NAS_INDUSTRIAS_TEXTIL_DO_CURTIMENTO_DO_VESTUARIO = TRABALHADORES_NAS_INDUSTRIAS_TEXTIL_DO_CURTIMENTO_DO_VESTUARIO_E_DAS_) %>% 
+  rename(DIRETORES_E_GERENTES_EM_EMPRESA_DE_SERVICOS_DE_SAUDE_DA_EDUCACAO = DIRETORES_E_GERENTES_EM_EMPRESA_DE_SERVICOS_DE_SAUDE_DA_EDUCACAO_OU_D) %>% 
+  rename(TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_FISICAS_QUIMICAS_ENGENHARIA = TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_FISICAS_QUIMICAS_ENGENHARIA_E_AF) %>% 
+  rename(TRABALHADORES_DE_INSTALACOES_E_MAQUINAS_DE_FABRICACAO_DE_CELULOSE = TRABALHADORES_DE_INSTALACOES_E_MAQUINAS_DE_FABRICACAO_DE_CELULOSE_E_PAP) %>% 
+  rename(OPERADORES_DE_PRODUCAO_CAPTACAO_TRATAMENTO_E_DISTRIBUICAO_ENERGIA = OPERADORES_DE_PRODUCAO_CAPTACAO_TRATAMENTO_E_DISTRIBUICAO_ENERGIA_A)
+
+# GERANDO AS MÉDIAS POR CLUSTER
+medias_pf <- PF %>% 
+  group_by(CLUSTER) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+# TRANSPOSIÇÃO MEDIAS pf
+colunas_interessePF <- colnames(PF)[5:49]
+
+medias_pf_transposto <- PF %>%
+  select(CLUSTER, all_of(colunas_interessePF)) %>%
+  pivot_longer(cols = -CLUSTER, names_to = "CBO", values_to = "Valor") %>%
+  group_by(CLUSTER, CBO) %>%
+  summarise(Media = mean(Valor, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = CLUSTER, values_from = Media, names_prefix = "CLUSTER_")
+
+# GRÁFICOS DE BARRAS MÉDIAS CLUSTER
+medias_pf_1 <- medias_pf_transposto %>%
+  arrange(desc(CLUSTER_1)) %>%
+  head(10)
+
+ggplot(medias_pf_1, aes(x = CLUSTER_1, y = reorder(CBO, CLUSTER_1))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pf_1))) +
+  geom_text(aes(label = paste0(round(CLUSTER_1, 1), "%"), x = CLUSTER_1, y = CBO),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+medias_pf_2 <- medias_pf_transposto %>%
+  arrange(desc(CLUSTER_2)) %>%
+  head(10)
+
+ggplot(medias_pf_2, aes(x = CLUSTER_2, y = reorder(CBO, CLUSTER_2))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pf_2))) +
+  geom_text(aes(label = paste0(round(CLUSTER_2, 1), "%"), x = CLUSTER_2, y = CBO),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+medias_pf_3 <- medias_pf_transposto %>%
+  arrange(desc(CLUSTER_3)) %>%
+  head(10)
+
+ggplot(medias_pf_3, aes(x = CLUSTER_3, y = reorder(CBO, CLUSTER_3))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pf_3))) +
+  geom_text(aes(label = paste0(round(CLUSTER_3, 1), "%"), x = CLUSTER_3, y = CBO),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+medias_pf_4 <- medias_pf_transposto %>%
+  arrange(desc(CLUSTER_4)) %>%
+  head(10)
+
+ggplot(medias_pf_4, aes(x = CLUSTER_4, y = reorder(CBO, CLUSTER_4))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pf_4))) +
+  geom_text(aes(label = paste0(round(CLUSTER_4, 1), "%"), x = CLUSTER_4, y = CBO),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+medias_pf_5 <- medias_pf_transposto %>%
+  arrange(desc(CLUSTER_5)) %>%
+  head(10)
+
+ggplot(medias_pf_5, aes(x = CLUSTER_5, y = reorder(CBO, CLUSTER_5))) +
+  geom_bar(stat = "identity", fill = viridis_pal(option = "D")(nrow(medias_pf_5))) +
+  geom_text(aes(label = paste0(round(CLUSTER_5, 1), "%"), x = CLUSTER_5, y = CBO),
+            hjust = -0.1, size = 3, color = "black") +
+  labs(x = NULL,
+       y = NULL) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8),
+        axis.title.y = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        axis.title.x = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none")
+
+
+# ANOVAS PF
+pander(anova_pf1 <- aov(formula = MEMBROS_SUPERIORES_E_DIRIGENTES_DO_PODER_PUBLICO ~ CLUSTER, data = PF))
+pander(anova_pf2 <- aov(formula = DIRIGENTES_DE_EMPRESAS_E_ORGANIZACOES_EXCETO_DE_INTERESSE_PUBLICO ~ CLUSTER, data = PF))
+pander(anova_pf3 <- aov(formula = DIRETORES_E_GERENTES_EM_EMPRESA_DE_SERVICOS_DE_SAUDE_DA_EDUCACAO ~ CLUSTER, data = PF))
+pander(anova_pf4 <- aov(formula = GERENTES ~ CLUSTER, data = PF))
+pander(anova_pf5 <- aov(formula = PESQUISADORES_E_PROFISSIONAIS_POLICIENTIFICOS ~ CLUSTER, data = PF))
+pander(anova_pf6 <- aov(formula = PROFISSIONAIS_DAS_CIENCIAS_EXATAS_FISICAS_E_DA_ENGENHARIA ~ CLUSTER, data = PF))
+pander(anova_pf7 <- aov(formula = PROFISSIONAIS_DAS_CIENCIAS_BIOLOGICAS_DA_SAUDE_E_AFINS ~ CLUSTER, data = PF))
+pander(anova_pf8 <- aov(formula = PROFISSIONAIS_DO_ENSINO ~ CLUSTER, data = PF))
+pander(anova_pf9 <- aov(formula = PROFISSIONAIS_DAS_CIENCIAS_JURIDICAS ~ CLUSTER, data = PF))
+pander(anova_pf10 <- aov(formula = PROFISSIONAIS_DAS_CIENCIAS_SOCIAIS_E_HUMANAS ~ CLUSTER, data = PF))
+pander(anova_pf11 <- aov(formula = COMUNICADORES_ARTISTAS_E_RELIGIOSOS ~ CLUSTER, data = PF))
+pander(anova_pf12 <- aov(formula = PROFISSIONAIS_EM_GASTRONOMIA ~ CLUSTER, data = PF))
+pander(anova_pf13 <- aov(formula = TECNICOS_POLIVALENTES ~ CLUSTER, data = PF))
+pander(anova_pf14 <- aov(formula = TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_FISICAS_QUIMICAS_ENGENHARIA ~ CLUSTER, data = PF))
+pander(anova_pf15 <- aov(formula = `TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_BIOLOGICAS_BIOQUIMICAS_DA_SAUDE` ~ CLUSTER, data = PF))
+pander(anova_pf16 <- aov(formula = PROFESSORES_LEIGOS_E_DE_NIVEL_MEDIO ~ CLUSTER, data = PF))
+pander(anova_pf17 <- aov(formula =  TECNICOS_DE_NIVEL_MEDIO_EM_SERVICOS_DE_TRANSPORTES ~ CLUSTER, data = PF))
+pander(anova_pf18 <- aov(formula = TECNICOS_DE_NIVEL_MEDIO_NAS_CIENCIAS_ADMINISTRATIVAS ~ CLUSTER, data = PF))
+pander(anova_pf19 <- aov(formula = TECNICOS_EM_NIVEL_MEDIO_DOS_SERVICOS_CULTURAIS_DAS_COMUNICACOES ~ CLUSTER, data = PF))
+pander(anova_pf20 <- aov(formula = OUTROS_TECNICOS_DE_NIVEL_MEDIO ~ CLUSTER, data = PF))
+pander(anova_pf21 <- aov(formula = ESCRITURARIOS ~ CLUSTER, data = PF))
+pander(anova_pf22 <- aov(formula = TRABALHADORES_DE_ATENDIMENTO_AO_PUBLICO ~ CLUSTER, data = PF))
+pander(anova_pf23 <- aov(formula = VENDEDORES_E_PRESTADORES_DE_SERVICOS_DO_COMERCIO ~ CLUSTER, data = PF))
+pander(anova_pf24 <- aov(formula = PRODUTORES_NA_EXPLORACAO_AGROPECUARIA ~ CLUSTER, data = PF))
+pander(anova_pf44 <- aov(formula = TRABALHADORES_NA_EXPLORACAO_AGROPECUARIA ~ CLUSTER, data = PF))
+pander(anova_pf25 <- aov(formula = PESCADORES_E_EXTRATIVISTAS_FLORESTAIS ~ CLUSTER, data = PF))
+pander(anova_pf26 <- aov(formula = TRABALHADORES_DA_MECANIZACAO_AGROPECUARIA_E_FLORESTAL ~ CLUSTER, data = PF))
+pander(anova_pf27 <- aov(formula = TRABALHADORES_DA_INDUSTRIA_EXTRATIVA_E_DA_CONSTRUCAO_CIVIL ~ CLUSTER, data = PF))
+pander(anova_pf28 <- aov(formula = TRABALHADORES_DA_TRANSFORMACAO_DE_METAIS_E_DE_COMPOSITOS ~ CLUSTER, data = PF))
+pander(anova_pf29 <- aov(formula = TRABALHADORES_DA_FABRICACAO_E_INSTALACAO_ELETROELETRONICA ~ CLUSTER, data = PF))
+pander(anova_pf30 <- aov(formula = MONTADORES_DE_APARELHOS_E_INSTRUMENTOS_DE_PRECISAO_E_MUSICAIS ~ CLUSTER, data = PF))
+pander(anova_pf31 <- aov(formula = JOALHEIROS_VIDREIROS_CERAMISTAS_E_AFINS ~ CLUSTER, data = PF))
+pander(anova_pf32 <- aov(formula = TRABALHADORES_NAS_INDUSTRIAS_TEXTIL_DO_CURTIMENTO_DO_VESTUARIO ~ CLUSTER, data = PF))
+pander(anova_pf33 <- aov(formula = TRABALHADORES_DAS_INDUSTRIAS_DE_MADEIRA_E_DO_MOBILIARIO ~ CLUSTER, data = PF))
+pander(anova_pf34 <- aov(formula = TRABALHADORES_DE_FUNCOES_TRANSVERSAIS ~ CLUSTER, data = PF))
+pander(anova_pf35 <- aov(formula = TRABALHADORES_DO_ARTESANATO ~ CLUSTER, data = PF))
+pander(anova_pf36 <- aov(formula = TRABALHADORES_EM_INDUSTRIAS_DE_PROCESSOS_CONTINUOS_E_OUTRAS_INDUSTRIAS ~ CLUSTER, data = PF))
+pander(anova_pf37 <- aov(formula = TRABALHADORES_DE_INSTALACOES_SIDERURGICAS_E_DE_MATERIAIS_DE_CONSTRUCAO ~ CLUSTER, data = PF))
+pander(anova_pf38 <- aov(formula = TRABALHADORES_DE_INSTALACOES_E_MAQUINAS_DE_FABRICACAO_DE_CELULOSE ~ CLUSTER, data = PF))
+pander(anova_pf39 <- aov(formula = TRABALHADORES_DA_FABRICACAO_DE_ALIMENTOS_BEBIDAS_E_FUMO ~ CLUSTER, data = PF))
+pander(anova_pf40 <- aov(formula = OPERADORES_DE_PRODUCAO_CAPTACAO_TRATAMENTO_E_DISTRIBUICAO_ENERGIA ~ CLUSTER, data = PF))
+pander(anova_pf41 <- aov(formula = TRABALHADORES_EM_SERVICOS_DE_REPARACAO_E_MANUTENCAO_MECANICA ~ CLUSTER, data = PF))
+pander(anova_pf42 <- aov(formula = POLIMANTENEDORES ~ CLUSTER, data = PF))
+pander(anova_pf43 <- aov(formula = OUTROS_TRABALHADORES_DA_CONSERVACAO_MANUTENCAO_E_REPARACAO ~ CLUSTER, data = PF))
+pander(anova_pf45 <- aov(formula = TRABALHADORES_DOS_SERVICOS ~ CLUSTER, data = PF))
+
+# FUNÇÃO PARA CRIAR BOXPLOT
+criar_boxplot <- function(anova_result, variavel) {
+  p <- ggplot(PF) +
+    aes(x = CLUSTER, y = .data[[variavel]]) +
+    geom_boxplot() +
+    labs(x = "Cluster", y = variavel)
+  return(p)
+}
+
+# CRIANDO BOXPLOT PARA CADA MÉTRICA
+boxplot_pf1 <- criar_boxplot(anova_pf1, "MEMBROS_SUPERIORES_E_DIRIGENTES_DO_PODER_PUBLICO")
+boxplot_pf2 <- criar_boxplot(anova_pf2, "DIRIGENTES_DE_EMPRESAS_E_ORGANIZACOES_EXCETO_DE_INTERESSE_PUBLICO")
+boxplot_pf3 <- criar_boxplot(anova_pf3, "DIRETORES_E_GERENTES_EM_EMPRESA_DE_SERVICOS_DE_SAUDE_DA_EDUCACAO")
+boxplot_pf4 <- criar_boxplot(anova_pf4, "GERENTES")
+boxplot_pf5 <- criar_boxplot(anova_pf5, "PESQUISADORES_E_PROFISSIONAIS_POLICIENTIFICOS")
+boxplot_pf6 <- criar_boxplot(anova_pf6, "PROFISSIONAIS_DAS_CIENCIAS_EXATAS_FISICAS_E_DA_ENGENHARIA")
+boxplot_pf7 <- criar_boxplot(anova_pf7, "PROFISSIONAIS_DAS_CIENCIAS_BIOLOGICAS_DA_SAUDE_E_AFINS")
+boxplot_pf8 <- criar_boxplot(anova_pf8, "PROFISSIONAIS_DO_ENSINO")
+boxplot_pf9 <- criar_boxplot(anova_pf9, "PROFISSIONAIS_DAS_CIENCIAS_JURIDICAS")
+boxplot_pf10 <- criar_boxplot(anova_pf10, "PROFISSIONAIS_DAS_CIENCIAS_SOCIAIS_E_HUMANAS")
+boxplot_pf11 <- criar_boxplot(anova_pf11, "COMUNICADORES_ARTISTAS_E_RELIGIOSOS")
+boxplot_pf12 <- criar_boxplot(anova_pf12, "PROFISSIONAIS_EM_GASTRONOMIA")
+boxplot_pf13 <- criar_boxplot(anova_pf13, "TECNICOS_POLIVALENTES")
+boxplot_pf14 <- criar_boxplot(anova_pf14, "TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_FISICAS_QUIMICAS_ENGENHARIA")
+boxplot_pf15 <- criar_boxplot(anova_pf15, "TECNICOS_DE_NIVEL_MEDIO_DAS_CIENCIAS_BIOLOGICAS_BIOQUIMICAS_DA_SAUDE")
+boxplot_pf16 <- criar_boxplot(anova_pf16, "PROFESSORES_LEIGOS_E_DE_NIVEL_MEDIO")
+boxplot_pf17 <- criar_boxplot(anova_pf17, "TECNICOS_DE_NIVEL_MEDIO_EM_SERVICOS_DE_TRANSPORTES")
+boxplot_pf18 <- criar_boxplot(anova_pf18, "TECNICOS_DE_NIVEL_MEDIO_NAS_CIENCIAS_ADMINISTRATIVAS")
+boxplot_pf19 <- criar_boxplot(anova_pf19, "TECNICOS_EM_NIVEL_MEDIO_DOS_SERVICOS_CULTURAIS_DAS_COMUNICACOES")
+boxplot_pf20 <- criar_boxplot(anova_pf20, "OUTROS_TECNICOS_DE_NIVEL_MEDIO")
+boxplot_pf21 <- criar_boxplot(anova_pf21, "ESCRITURARIOS")
+boxplot_pf22 <- criar_boxplot(anova_pf22, "TRABALHADORES_DE_ATENDIMENTO_AO_PUBLICO")
+boxplot_pf23 <- criar_boxplot(anova_pf23, "VENDEDORES_E_PRESTADORES_DE_SERVICOS_DO_COMERCIO")
+boxplot_pf24 <- criar_boxplot(anova_pf24, "PRODUTORES_NA_EXPLORACAO_AGROPECUARIA")
+boxplot_pf44 <- criar_boxplot(anova_pf44, "TRABALHADORES_NA_EXPLORACAO_AGROPECUARIA")
+boxplot_pf25 <- criar_boxplot(anova_pf25, "PESCADORES_E_EXTRATIVISTAS_FLORESTAIS")
+boxplot_pf26 <- criar_boxplot(anova_pf26, "TRABALHADORES_DA_MECANIZACAO_AGROPECUARIA_E_FLORESTAL")
+boxplot_pf27 <- criar_boxplot(anova_pf27, "TRABALHADORES_DA_INDUSTRIA_EXTRATIVA_E_DA_CONSTRUCAO_CIVIL")
+boxplot_pf28 <- criar_boxplot(anova_pf28, "TRABALHADORES_DA_TRANSFORMACAO_DE_METAIS_E_DE_COMPOSITOS")
+boxplot_pf29 <- criar_boxplot(anova_pf29, "TRABALHADORES_DA_FABRICACAO_E_INSTALACAO_ELETROELETRONICA")
+boxplot_pf30 <- criar_boxplot(anova_pf30, "MONTADORES_DE_APARELHOS_E_INSTRUMENTOS_DE_PRECISAO_E_MUSICAIS")
+boxplot_pf31 <- criar_boxplot(anova_pf31, "JOALHEIROS_VIDREIROS_CERAMISTAS_E_AFINS")
+boxplot_pf32 <- criar_boxplot(anova_pf32, "TRABALHADORES_NAS_INDUSTRIAS_TEXTIL_DO_CURTIMENTO_DO_VESTUARIO")
+boxplot_pf33 <- criar_boxplot(anova_pf33, "TRABALHADORES_DAS_INDUSTRIAS_DE_MADEIRA_E_DO_MOBILIARIO")
+boxplot_pf34 <- criar_boxplot(anova_pf34, "TRABALHADORES_DE_FUNCOES_TRANSVERSAIS")
+boxplot_pf35 <- criar_boxplot(anova_pf35, "TRABALHADORES_DO_ARTESANATO")
+boxplot_pf36 <- criar_boxplot(anova_pf36, "TRABALHADORES_EM_INDUSTRIAS_DE_PROCESSOS_CONTINUOS_E_OUTRAS_INDUSTRIAS")
+boxplot_pf37 <- criar_boxplot(anova_pf37, "TRABALHADORES_DE_INSTALACOES_SIDERURGICAS_E_DE_MATERIAIS_DE_CONSTRUCAO")
+boxplot_pf38 <- criar_boxplot(anova_pf38, "TRABALHADORES_DE_INSTALACOES_E_MAQUINAS_DE_FABRICACAO_DE_CELULOSE")
+boxplot_pf39 <- criar_boxplot(anova_pf39, "TRABALHADORES_DA_FABRICACAO_DE_ALIMENTOS_BEBIDAS_E_FUMO")
+boxplot_pf40 <- criar_boxplot(anova_pf40, "OPERADORES_DE_PRODUCAO_CAPTACAO_TRATAMENTO_E_DISTRIBUICAO_ENERGIA")
+boxplot_pf41 <- criar_boxplot(anova_pf41, "TRABALHADORES_EM_SERVICOS_DE_REPARACAO_E_MANUTENCAO_MECANICA")
+boxplot_pf42 <- criar_boxplot(anova_pf42, "POLIMANTENEDORES")
+boxplot_pf43 <- criar_boxplot(anova_pf43, "OUTROS_TRABALHADORES_DA_CONSERVACAO_MANUTENCAO_E_REPARACAO")
+boxplot_pf45 <- criar_boxplot(anova_pf45, "TRABALHADORES_DOS_SERVICOS")
+
+# BOXPLOT COMBINADO DAS MÉTRICAS QUE MAIS SE DESTACARAM NOS CLUSTERS
+boxplots_combinadospf_1 <- gridExtra::grid.arrange(boxplot_pf32, boxplot_pf44, ncol = 2)
+boxplots_combinadospf_2 <- gridExtra::grid.arrange(boxplot_pf34, boxplot_pf21, ncol = 2)
+boxplots_combinadospf_3 <- gridExtra::grid.arrange(boxplot_pf45, boxplot_pf23, ncol = 2)
+
+
+### MAPA PF ###
+
+# CARREGAMENTO DADOS MAPA BRASIL
+all_mun_br <- read_municipality(year = 2020)
+
+# AJUSTE DADOS MAPA
+base_mapapf <- PF %>%
+  select(UF, MUNICIPIO, CODIGO_IBGE, CLUSTER)
+base_mapapf$CODIGO_IBGE <- as.numeric(base_mapapf$CODIGO_IBGE)
+
+vec1 <- as.numeric(base_mapapf$CODIGO_IBGE)
+all_geo_pf <- all_mun_br %>%
+  filter(code_muni %in% vec1)
+
+all_geo_pf <- left_join(all_geo_pf, base_mapapf, by = c("code_muni" = "CODIGO_IBGE"))
+
+# DEFININDO AS CORES DE CADA CLUSTER
+cor_cluster1PF <- "#440154FF" 
+cor_cluster2PF <- "#453781FF"
+cor_cluster3PF <- "#20A486FF"
+cor_cluster4PF <- "#75D054FF"
+cor_cluster5PF <- "#C7E020FF"
+
+tm_shape(all_geo_pf) +
+  tm_borders(lwd = 0.1) +
+  tm_fill(col = "CLUSTER", palette = c(cor_cluster1PF, cor_cluster2PF, cor_cluster3PF, cor_cluster4PF, cor_cluster5PF)) +
+  tm_layout(frame = FALSE) +
+  tm_legend(legend.position = c("right", "bottom"),
+            legend.bg.color = "white", legend.title.size = 1, legend.text.size = 1)
+
+# CONTA QTD MUNICIPIO POR CLUSTER
+dados_contagemPF <- PF %>%
+  group_by(CLUSTER) %>%
+  summarise(Quantidade = n_distinct(CODIGO_IBGE))
+
+dados_contagemPF$CLUSTER <- factor(dados_contagemPF$CLUSTER)
+
+# GRÁFICO BARRAS
+ggplot(dados_contagemPF, aes(x = CLUSTER, y = Quantidade, fill = CLUSTER)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Quantidade), vjust = -0.2, color = "black", fontface = "bold") + 
+  labs(x = NULL, y = NULL, fill = NULL) +  
+  scale_fill_manual(values = c(cor_cluster1PF, cor_cluster2PF, cor_cluster3PF, cor_cluster4PF, cor_cluster5PF)) +
+  theme_minimal() +
+  theme(axis.ticks.x = element_blank(),  
+        axis.text.y = element_blank(),    
+        axis.ticks.y = element_blank(),   
+        legend.position = "none",         
+        plot.title = element_blank(),     
+        plot.subtitle = element_blank(),  
+        plot.caption = element_blank(),   
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())  
+
+### FIM ###
